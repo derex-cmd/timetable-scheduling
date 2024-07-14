@@ -23,8 +23,8 @@ This project aims to develop an AI model to solve a specific problem. The projec
 1. Clone the repository:
 
 ```sh
-git clone https://github.com/yourusername/AI_Proj_21i2476_D.git
-cd AI_Proj_21i2476_D
+git clone https://github.com/derex-cmd/timetable-scheduling.git
+cd timetable-scheduling
 ```
 
 2. Install the required libraries:
@@ -36,7 +36,7 @@ pip install pandas numpy matplotlib seaborn scikit-learn
 3. Open the Jupyter Notebook:
 
 ```sh
-jupyter notebook AI_Proj_21i2476_D.ipynb
+jupyter notebook main.ipynb
 ```
 
 ## Usage
