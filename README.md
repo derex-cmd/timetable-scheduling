@@ -1,121 +1,218 @@
+# Course Scheduling Genetic Algorithm
 
-# Timetable Scheduling 
+## Overview
 
-This project aims to develop an AI model to solve a specific problem. The project involves data preprocessing, model training, evaluation, and deployment. The notebook provides a step-by-step guide to implementing the AI model.
+This project implements a genetic algorithm to schedule theory and lab courses effectively. The algorithm is designed to create a timetable that satisfies various constraints such as avoiding course overlaps, ensuring that instructors are not double-booked, and managing the number of courses assigned to each section and instructor.
 
-## Project Structure
+## Features
 
-- **Introduction**: Overview of the project and its objectives.
-- **Data Preprocessing**: Steps for loading, exploring, and preprocessing the dataset.
-- **Model Training**: Instructions for defining, compiling, and training the AI model.
-- **Model Deployment**: Demonstration of how to deploy the trained model for inference on new data.
+- **Genetic Algorithm**: Utilizes genetic algorithm techniques including selection, crossover, and mutation to optimize the timetable.
+- **Binary Encoding**: Courses, sections, and instructors are encoded in binary to facilitate genetic operations.
+- **Fitness Function**: Evaluates timetables based on constraints and penalties to determine the quality of solutions.
+- **Data Integration**: Reads course and timetable data from Excel files stored in Google Drive.
 
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.x
-- Jupyter Notebook
-- Required Python libraries: `pandas`, `numpy`, `matplotlib`, `seaborn`, `scikit-learn`
+- Google Colab (for running the notebook and accessing Google Drive)
+- Required Python libraries: `pandas`, `numpy`
 
 ### Installation
 
-1. Clone the repository:
+1. **Mount Google Drive**: Ensure you have access to your Google Drive and mount it in the Google Colab environment:
 
-```sh
-git clone https://github.com/derex-cmd/timetable-scheduling.git
-cd timetable-scheduling
-```
+    ```python
+    from google.colab import drive
+    drive.mount('/content/drive')
+    ```
 
-2. Install the required libraries:
+2. **Prepare Excel Files**: Place the following files in your Google Drive:
+    - `courses.xlsx`: Contains theory and lab courses information.
+    - `lab_courses.xlsx`: Contains lab courses information.
+    - `timetable.xlsx`: Contains the timetable for theory courses.
+    - `timetable_lab.xlsx`: Contains the timetable for lab courses.
 
-```sh
-pip install pandas numpy matplotlib seaborn scikit-learn
-```
+3. **Install Dependencies**:
 
-3. Open the Jupyter Notebook:
+    ```sh
+    pip install pandas numpy
+    ```
 
-```sh
-jupyter notebook main.ipynb
-```
+## Code Description
 
-## Usage
-
-### Data Preprocessing
-
-1. Load the dataset:
+### Import Libraries and Read Files
 
 ```python
-data = pd.read_csv('data.csv')
-data.head()
+import pandas as pd
+import numpy as np
+import random
+from numpy.random import choice
+
+df_theory = pd.read_excel("/content/drive/My Drive/courses.xlsx")
+df_lab = pd.read_excel("/content/drive/My Drive/lab_courses.xlsx")
+timetable_theory = pd.read_excel("/content/drive/My Drive/timetable.xlsx")
+timetable_lab = pd.read_excel("/content/drive/My Drive/timetable_lab.xlsx")
 ```
 
-2. Perform exploratory data analysis (EDA):
-
+### Data Preparation and Encoding
 ```python
-sns.pairplot(data)
-plt.show()
+rooms_theory = timetable_theory['Room'].values.tolist()[:30]
+timeslots_theory = timetable_theory.columns.values.tolist()[1:]
+rooms_lab = timetable_lab['Lab'].values.tolist()[:16]
+timeslots_lab = timetable_lab.columns.values.tolist()[1:]
+
+df_combined = pd.concat([df_theory, df_lab], ignore_index=True)
+timetable_combined = pd.concat([timetable_theory, timetable_lab], axis=1)
+
+df_theory['Type'] = 'Theory'
+df_lab['Type'] = 'Lab'
+df_combined = pd.concat([df_theory, df_lab], ignore_index=True)
+
+courses = df_combined['Course'].unique()
+sections = df_combined['Section'].unique()
+instructors = df_combined['Course Instructor'].unique()
+
+course_bits = len(format(len(courses), 'b'))
+section_bits = len(format(len(sections), 'b'))
+instructor_bits = len(format(len(instructors), 'b'))
+
+course_mapping = {course: format(index, f'0{course_bits}b') for index, course in enumerate(courses)}
+section_mapping = {section: format(index, f'0{section_bits}b') for index, section in enumerate(sections)}
+instructor_mapping = {instructor: format(index, f'0{instructor_bits}b') for index, instructor in enumerate(instructors)}
+
+reverse_course_mapping = {v: k for k, v in course_mapping.items()}
+reverse_section_mapping = {v: k for k, v in section_mapping.items()}
+reverse_instructor_mapping = {v: k for k, v in instructor_mapping.items()}
+
+theory_chromosomes = np.array([
+    [course_mapping[row['Course']], section_mapping[row['Section']], instructor_mapping[row['Course Instructor']]]
+    for _, row in df_combined[df_combined['Type'] == 'Theory'].iterrows()
+])
+
+lab_chromosomes = np.array([
+    [course_mapping[row['Course']], section_mapping[row['Section']], instructor_mapping[row['Course Instructor']]]
+    for _, row in df_combined[df_combined['Type'] == 'Lab'].iterrows()
+])
+
+binary_string_mapping = {
+    'course': {v: k for k, v in course_mapping.items()},
+    'section': {v: k for k, v in section_mapping.items()},
+    'instructor': {v: k for k, v in instructor_mapping.items()}
+}
+
+teacher_course_count = {teacher: 0 for teacher in instructor_mapping.values()}
+section_course_count = {section: 0 for section in section_mapping.values()}
 ```
 
-### Model Training
-
-1. Split the data into training and testing sets:
-
+### Fitness Function
 ```python
-X = data.drop('target', axis=1)
-y = data['target']
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+def fitness(timetable):
+    score = 0
+
+    # If a column doesn't have a section name clash, +40 points
+    for x in timetable.T[1]:
+        if len(np.unique(x)) == len(x):
+            score += 40
+
+    # If a column doesn't have a teacher name clash, +40 points
+    for x in timetable.T[2]:
+        if len(np.unique(x)) == len(x):
+            score += 40
+
+    # Check for clashes of classes at the same time
+    if timetable.shape[1] == len(timeslots_theory):
+        timeslots = timeslots_theory
+    else:
+        timeslots = timeslots_lab
+
+    for timeslot_index in range(len(timeslots)):
+        section_teacher_pairs = timetable[:, timeslot_index, 1:3]  # Extract section and teacher for the current timeslot
+        unique_pairs = np.unique(section_teacher_pairs, axis=0)  # Get unique pairs of section and teacher
+        if len(unique_pairs) != len(section_teacher_pairs):  # If there are duplicate pairs, penalize
+            score -= 100  # Penalize
+
+    # Check if a professor is assigned more than 3 courses
+    for teacher, count in teacher_course_count.items():
+        if count > 3:
+            score -= (count - 3) * 100  # Penalize
+
+    # Check if no section has more than 5 courses
+    for section, count in section_course_count.items():
+        if count > 5:
+            score -= (count - 5) * 100  # Penalize
+
+    return score
 ```
 
-2. Scale the features:
-
+### Mutation Function
 ```python
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train)
-X_test_scaled = scaler.transform(X_test)
+def mutation(child, probability):
+    if random.random() < probability:
+        for index in range(len(child)):
+            for i in range(len(child[index])):
+                if len(np.unique(child[:, i, 1])) == 1:
+                    new_chromosome = random.choice(chromosomes)
+                    while not np.array_equal(new_chromosome, child[index, i]):
+                        new_chromosome = random.choice(chromosomes)
+                    child[index, i] = new_chromosome
+    return child
 ```
 
-3. Define and train the model:
-
+### Selection Function
 ```python
-model = LogisticRegression()
-model.fit(X_train_scaled, y_train)
+def selection(index, scores):
+    # Convert scores to non-negative values
+    min_score = min(scores)
+    non_negative_scores = scores - min_score + 1  # Add 1 to ensure non-negative scores
+    distribution = non_negative_scores / non_negative_scores.sum()
+    return choice(index, 2, p=distribution, replace=False)
 ```
 
-4. Evaluate the model:
-
+### Crossover Function
 ```python
-y_pred = model.predict(X_test_scaled)
-accuracy = accuracy_score(y_test, y_pred)
-conf_matrix = confusion_matrix(y_test, y_pred)
-print('Accuracy:', accuracy)
-print('Confusion Matrix:', conf_matrix)
+def crossover(parent1, parent2):
+    if random.random() < 0.5:
+        index = random.randint(1, len(parent1) - 2)
+        child1 = np.concatenate((parent1[:index], parent2[index:]))
+        child2 = np.concatenate((parent2[:index], parent1[index:]))
+    else:
+        index = random.randint(1, len(timeslots_theory) - 2)
+        child1 = np.concatenate((parent1[:, :index], parent2[:, index:]), axis=1)
+        child2 = np.concatenate((parent1[:, :index], parent2[:, index:]), axis=1)
+
+    # Ensure new chromosomes are among the list of dictionaries)
+    for i in range(len(child1)):
+        for j in range(len(child1[i])):
+            chromosome_index = np.where((chromosomes == child1[i, j]).all(axis=1))[0][0]
+            if not np.array_equal(child1[i, j], chromosomes[chromosome_index]):
+                child1[i, j] = random.choice(chromosomes)
+            chromosome_index = np.where((chromosomes == child2[i, j]).all(axis=1))[0][0]
+            if not np.array_equal(child2[i, j], chromosomes[chromosome_index]):
+                child2[i, j] = random.choice(chromosomes)
+
+    return [child1, child2]
+
 ```
 
-### Model Deployment
-
-1. Function to make predictions on new data:
-
+### Generate Initial Population
 ```python
-def predict_new(data):
-    data_scaled = scaler.transform(data)
-    predictions = model.predict(data_scaled)
-    return predictions
+populationSize = min(len(rooms_theory), len(rooms_lab))
+generations = 1000
+mutationProb = 0.2
+
+# Initialize empty timetables for each day of the week
+timetables = {day: np.array([[[] for _ in range(len(timeslots_theory) + len(timeslots_lab))] for _ in range(populationSize)]) for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']}
+
+# Evolutionary loop for each day
+for day in timetables.keys():
+    # Separate populations for theory and lab
+    theory_population = [np.array([[random.choice(theory_chromosomes) for _ in timeslots_theory] for _ in range(populationSize)]) for _ in range(populationSize)]
+    lab_population = [np.array([[random.choice(lab_chromosomes) for _ in timeslots_lab] for _ in range(populationSize)]) for _ in range(populationSize)]
 ```
 
-2. Example of using the function:
-
-```python
-new_data = pd.DataFrame({
-    'feature1': [1.5, 2.3],
-    'feature2': [3.1, 4.5],
-    'feature3': [5.2, 6.3]
-})
-predictions = predict_new(new_data)
-print('Predictions:', predictions)
-```
 
 ## Contributing
 
 Contributions are welcome! Feel free to submit a pull request or open an issue to discuss improvements or bugs.
-
